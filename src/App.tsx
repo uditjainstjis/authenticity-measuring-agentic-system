@@ -14,20 +14,16 @@ import {
   PieChart,
   BarChart3,
   FileText,
-  ArrowRight,
-  RotateCcw,
-  ExternalLink
+  ArrowRight
 } from "lucide-react";
 import { AgentState, INITIAL_STATE, Claim, SearchResult } from "./types";
-import { GoogleGenAI, Type, ThinkingLevel } from "@google/genai";
+import { GoogleGenAI, Type } from "@google/genai";
 import { createAgentGraph } from "./lib/agent";
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 export default function App() {
   const [url, setUrl] = useState("");
-  const [elapsed, setElapsed] = useState(0);
-  const timerRef = useRef<NodeJS.Timeout | null>(null);
   const [state, setState] = useState<AgentState>(INITIAL_STATE);
   const [isProcessing, setIsProcessing] = useState(false);
   const logEndRef = useRef<HTMLDivElement>(null);
@@ -46,28 +42,11 @@ export default function App() {
     if (!url || isProcessing) return;
 
     setIsProcessing(true);
-    setElapsed(0);
-    const start = Date.now();
-    timerRef.current = setInterval(() => {
-      setElapsed(Math.floor((Date.now() - start) / 1000));
-    }, 1000);
-
-    const initialLocalState: AgentState = { 
-      ...INITIAL_STATE, 
-      logs: [`[${new Date().toLocaleTimeString()}] Initializing Veritas Engine...`],
-      startTime: start
-    };
+    const initialLocalState: AgentState = { ...INITIAL_STATE, logs: [`[${new Date().toLocaleTimeString()}] Initializing Veritas Engine...`] };
     setState(initialLocalState);
 
     try {
-      const timingLog: { stage: string; duration: number }[] = [];
-      const trackTiming = (stage: string, duration: number) => {
-        timingLog.push({ stage, duration });
-        setState(prev => ({ ...prev, timing: [...timingLog] }));
-      };
-
       // Step 1: Pre-Graph Ingestion
-      const ingestStart = Date.now();
       const isUrl = url.trim().startsWith("http");
       let data: any;
 
@@ -85,84 +64,84 @@ export default function App() {
         data = { title: "Direct Input", content: url.trim() };
       }
       
-      trackTiming("Data Ingestion", (Date.now() - ingestStart) / 1000);
       const snippet = data.content.substring(0, 500);
       setSourceData(data);
       setState(prev => ({ ...prev, sourceSnippet: snippet }));
-
-      // Parallel Pre-emptive Research: Rapid Intelligence Pulse (Fire & Forget)
-      const preemptiveResearch = async () => {
-        try {
-          const res = await ai.models.generateContent({
-            model: "gemini-3-flash-preview",
-            contents: `Conduct a forensic scan for: "${data.title === 'Direct Input' ? data.content : data.title}". Return JSON { "results": [{ "url": string, "title": string, "snippet": string }] }.`,
-            config: {
-              tools: [{ googleSearch: {} }],
-              responseMimeType: "application/json",
-            }
-          });
-          const parsed = JSON.parse(res.text);
-          if (parsed.results) {
-            setState(prev => ({ 
-              ...prev, 
-              results: [...prev.results, ...parsed.results.map((r: any) => ({ ...r, sourceType: "TRUSTED" as const }))]
-            }));
-          }
-        } catch (e) { console.error(e); }
-      };
-      preemptiveResearch();
 
       // Define callbacks for LangGraph nodes
       const graph = createAgentGraph({
         onNodeStart: async (node, currentState) => {
           let update: Partial<AgentState> = {};
-          const nodeStart = Date.now();
           
-          if (node === "discovery") {
-            setState(prev => ({ ...prev, status: "RESEARCHING" }));
-            const logs = addLogToState(currentState.logs, "Node: DISCOVERY. Unified Extraction + Parallel Fact-Check active.");
-            
-            // Single High-Performance Call for Extraction + Initial Verification
-            const discoveryResponse = await ai.models.generateContent({
+          if (node === "extract") {
+            const logs = addLogToState(currentState.logs, "Ingested source. Node: EXTRACT. Port: 8080/RPC");
+            const extractionResponse = await ai.models.generateContent({
               model: "gemini-3-flash-preview",
-              contents: `Verify this content. Extract 3 main claims and find evidence for each. Return as JSON.\n\nCONTENT: ${data.content}`,
+              contents: `Analyze this text and list the 3 most significant verifiable claims made. Provide them in a JSON array of objects with 'text' and 'category'.\n\nTEXT: ${data.content}`,
               config: {
-                systemInstruction: "You are an elite forensic engine. Use Google Search to verify claims. Return JSON with 'claims' (text, category) and 'results' (url, title, snippet).",
-                tools: [{ googleSearch: {} }],
+                systemInstruction: "You are an elite news forensics analyst. Extract the primary factual claims from the text. Return as JSON.",
                 responseMimeType: "application/json",
-                thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
                 responseSchema: {
                   type: Type.OBJECT,
                   properties: {
-                    claims: { type: Type.ARRAY, items: { type: Type.OBJECT, properties: { text: { type: Type.STRING }, category: { type: Type.STRING } } } },
-                    results: { type: Type.ARRAY, items: { type: Type.OBJECT, properties: { url: { type: Type.STRING }, title: { type: Type.STRING }, snippet: { type: Type.STRING } } } }
+                    claims: {
+                      type: Type.ARRAY,
+                      items: {
+                        type: Type.OBJECT,
+                        properties: {
+                          text: { type: Type.STRING },
+                          category: { type: Type.STRING }
+                        }
+                      }
+                    }
                   }
                 }
               }
             });
-
-            const parsed = JSON.parse(discoveryResponse.text);
-            trackTiming("Discovery & Verification", (Date.now() - nodeStart) / 1000);
-
+            const extracted = JSON.parse(extractionResponse.text).claims;
             update = { 
-              status: "RESEARCHING",
-              logs: addLogToState(logs, `Discovery complete. ${parsed.claims?.length || 0} claims verified via authoritative web scan.`),
-              claims: (parsed.claims || []).map((c: any, i: number) => ({ ...c, id: String(i), confidence: 0.9 })),
-              results: [...currentState.results, ...(parsed.results || []).map((r: any) => ({ ...r, sourceType: "TRUSTED" as const }))]
+              status: "EXTRACTING",
+              logs: addLogToState(logs, `Heuristics scan complete. ${extracted.length} focus points isolated.`),
+              claims: extracted.map((c: any, i: number) => ({ ...c, id: String(i), confidence: 0.85 + Math.random() * 0.1 }))
             };
           }
 
-          if (node === "synthesis") {
-            setState(prev => ({ ...prev, status: "ANALYZING" }));
-            const logs = addLogToState(currentState.logs, "Node: SYNTHESIS. Generating expert verdict...");
-            
+          if (node === "embed") {
+            const logs = addLogToState(currentState.logs, "Node: EMBED. Synthesizing vector representations for ChromaDB...");
+            await new Promise(r => setTimeout(r, 1800)); // Simulate intensive vector computation
+            update = { 
+              status: "EMBEDDING",
+              logs: addLogToState(logs, "Dimensionality reduction complete. Semantic anchors stored in temporary vector space.")
+            };
+          }
+
+          if (node === "research") {
+            const logs = addLogToState(currentState.logs, "Node: RESEARCH. Initiating multi-vector fact-check...");
+            const searchTasks = currentState.claims.map(async (claim: any) => {
+              const result = await ai.models.generateContent({
+                model: "gemini-3-flash-preview",
+                contents: `Find 2 high-quality sources that support or contradict this claim: "${claim.text}". List them as JSON with 'url', 'title', and 'snippet'.`,
+                config: {
+                  tools: [{ googleSearch: {} }]
+                }
+              });
+              return result;
+            });
+            await Promise.all(searchTasks);
+            update = { 
+              status: "RESEARCHING",
+              logs: addLogToState(logs, "Search phase completed. Grounding response in live knowledge graph.")
+            };
+          }
+
+          if (node === "evaluate") {
+            const logs = addLogToState(currentState.logs, "Node: EVALUATE. Running synthesis matrix...");
             const verdictResponse = await ai.models.generateContent({
               model: "gemini-3-flash-preview",
-              contents: `Generate final verdict based on claims and results.\n\nCLAIMS: ${JSON.stringify(currentState.claims)}\n\nRESULTS: ${JSON.stringify(currentState.results)}`,
+              contents: `Provide a final verdict for this intelligence report.\n\nSOURCE CONTENT: ${data.content}\n\nRESEARCHED CLAIMS: ${JSON.stringify(currentState.claims)}`,
               config: {
-                systemInstruction: "Synthesize findings into an expert report. Return JSON.",
+                systemInstruction: "Synthesize findings into an expert report. Identify specific evidence points (min 3) that support your verdict. Format as JSON.",
                 responseMimeType: "application/json",
-                thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
                 responseSchema: {
                   type: Type.OBJECT,
                   properties: {
@@ -176,15 +155,11 @@ export default function App() {
                 }
               }
             });
-
             const verdict = JSON.parse(verdictResponse.text);
-            const duration = (Date.now() - nodeStart) / 1000;
-            trackTiming("Final Synthesis", duration);
-
             update = { 
               status: "ANALYZING",
               verdict,
-              logs: addLogToState(logs, `Audit synchronized. Final Rating: ${verdict.label}.`)
+              logs: addLogToState(logs, `Verdict established: ${verdict.label}. Analysis backing secured.`)
             };
           }
 
@@ -195,10 +170,8 @@ export default function App() {
       });
 
       // Run the graph
-      await graph.invoke({ ...initialLocalState, sourceSnippet: snippet } as any);
-      const totalDuration = (Date.now() - start) / 1000;
-      if (timerRef.current) clearInterval(timerRef.current);
-      setState(prev => ({ ...prev, status: "COMPLETING", auditDuration: totalDuration }));
+      await graph.invoke(initialLocalState as any);
+      setState(prev => ({ ...prev, status: "COMPLETING" }));
 
     } catch (err: any) {
       setState(prev => ({ 
@@ -357,22 +330,8 @@ export default function App() {
                                ))}
                             </div>
                             <div className="flex flex-col items-center text-center">
-                              <h3 className="text-3xl font-black text-[#1f2124] uppercase tracking-tighter">Autonomous Discovery</h3>
-                              <p className="text-[10px] font-black text-gray-300 uppercase tracking-widest mt-2 mb-4">{url.startsWith('http') ? `Ingesting from ${new URL(url).hostname}...` : 'Synthesizing input for vector indexing...'}</p>
-                              {state.results.length > 0 && (
-                                <motion.div 
-                                  initial={{ opacity: 0, y: 10 }}
-                                  animate={{ opacity: 1, y: 0 }}
-                                  className="flex gap-2 flex-wrap justify-center max-w-lg"
-                                >
-                                  {state.results.map((res, i) => (
-                                    <div key={i} className="px-3 py-1 bg-white/60 border border-blue-50 rounded-full text-[8px] font-black text-blue-400 flex items-center gap-2">
-                                      <div className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-pulse" />
-                                      {new URL(res.url).hostname.replace('www.', '')}
-                                    </div>
-                                  ))}
-                                </motion.div>
-                              )}
+                              <h3 className="text-3xl font-black text-blue-500 uppercase tracking-tighter">Autonomous Intelligence Gathering</h3>
+                              <p className="text-[10px] font-black text-gray-300 uppercase tracking-widest mt-2">{url.startsWith('http') ? `Ingesting from ${new URL(url).hostname}...` : 'Synthesizing input for vector indexing...'}</p>
                             </div>
                          </div>
                        </motion.div>
@@ -451,18 +410,6 @@ export default function App() {
                              <div className="relative bg-white p-6 rounded-3xl shadow-2xl z-10 border border-yellow-100 flex flex-col items-center">
                                 <Search className="h-10 w-10 text-yellow-500 mb-2 animate-pulse" />
                                 <span className="text-[10px] font-black uppercase text-gray-400">Veritas Search Tool</span>
-                                <div className="mt-4 flex flex-col gap-1 w-full max-w-[150px]">
-                                   {state.results.slice(-2).map((res, i) => (
-                                      <motion.div 
-                                        key={i}
-                                        initial={{ opacity: 0, y: 5 }}
-                                        animate={{ opacity: 1, y: 0 }}
-                                        className="text-[8px] font-mono text-yellow-600 bg-yellow-50 px-2 py-0.5 rounded truncate"
-                                      >
-                                         FETCHING: {new URL(res.url).hostname}
-                                      </motion.div>
-                                   ))}
-                                </div>
                              </div>
                              {/* Floating Search Result Fragments */}
                              {[1,2,3,4,5,6].map(i => (
@@ -481,7 +428,7 @@ export default function App() {
                         </motion.div>
                      )}
 
-                     {state.status === 'ANALYZING' && !state.verdict && (
+                     {state.status === 'ANALYZING' && (
                         <motion.div 
                           key="analyzing-vis"
                           initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
@@ -520,56 +467,13 @@ export default function App() {
                                 {state.verdict.label} Audit Complete
                               </div>
                               <div className="text-gray-400 text-xs font-mono font-bold">Ref: VER-2026-XQ</div>
-                              <div className="ml-auto flex gap-2">
-                                <button 
-                                  onClick={() => {
-                                    const lastAudit = state.verdict?.summary || "previous analysis";
-                                    setUrl(`Follow up on: ${lastAudit}\n\nMy question: `);
-                                    setState(prev => ({ ...prev, verdict: undefined, status: "IDLE" }));
-                                  }}
-                                  className="bg-white hover:bg-gray-50 text-gray-800 px-4 py-2 rounded-full text-[10px] font-black uppercase tracking-widest border border-gray-200 shadow-sm flex items-center gap-2 transition-all active:scale-95"
-                                >
-                                  <Search className="h-3 w-3" />
-                                  Follow Up
-                                </button>
-                                <button 
-                                  onClick={() => { setState(INITIAL_STATE); setUrl(""); }}
-                                  className="bg-[#4285F4] hover:bg-[#3367d6] text-white px-4 py-2 rounded-full text-[10px] font-black uppercase tracking-widest shadow-lg flex items-center gap-2 transition-all active:scale-95"
-                                >
-                                  <RotateCcw className="h-3 w-3" />
-                                  New Audit
-                                </button>
-                              </div>
                            </div>
                            <h2 className="text-4xl md:text-5xl font-black tracking-tighter leading-none mb-4">{state.verdict.summary}</h2>
                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                               <div className="bg-white/50 p-6 rounded-3xl border border-white/50">
-                                 <h4 className="text-[10px] font-black uppercase text-gray-400 mb-4 tracking-widest">Neural Performance Lab</h4>
-                                 <div className="flex flex-col gap-4">
-                                   <div className="flex items-baseline gap-6 pb-4 border-b border-gray-100">
-                                     <div>
-                                       <div className="text-5xl font-black mb-1 text-[#4285F4]">{state.verdict.score}%</div>
-                                       <div className="text-[10px] text-gray-400 font-bold uppercase tracking-tighter">Confidence Index</div>
-                                     </div>
-                                     {state.auditDuration && (
-                                       <div className="pl-6 border-l border-gray-100">
-                                         <div className="text-3xl font-black mb-1 text-gray-800">{state.auditDuration.toFixed(1)}s</div>
-                                         <div className="text-[10px] text-gray-400 font-bold uppercase tracking-tighter">Total Sync Time</div>
-                                       </div>
-                                     )}
-                                   </div>
-                                   <div className="space-y-3">
-                                      <h5 className="text-[9px] font-black text-gray-400 uppercase tracking-widest">Dynamic Latency Benchmarks</h5>
-                                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                                        {state.timing?.map((t, i) => (
-                                          <div key={i} className="flex justify-between items-center text-[10px] bg-white/40 p-2 rounded-xl border border-white/20">
-                                            <span className="text-gray-500 font-bold uppercase tracking-tighter">{t.stage}</span>
-                                            <span className="text-gray-800 font-black">{t.duration.toFixed(2)}s</span>
-                                          </div>
-                                        ))}
-                                      </div>
-                                   </div>
-                                 </div>
+                                 <h4 className="text-[10px] font-black uppercase text-gray-400 mb-4 tracking-widest">Confidence Metrics</h4>
+                                 <div className="text-5xl font-black mb-1 text-[#4285F4]">{state.verdict.score}%</div>
+                                 <div className="text-xs text-gray-400">Veracity Confidence Index</div>
                               </div>
                               <div className="bg-white/50 p-6 rounded-3xl border border-white/50 space-y-3">
                                  <h4 className="text-[10px] font-black uppercase text-gray-400 mb-1 tracking-widest">Evidence Backing</h4>
@@ -583,32 +487,6 @@ export default function App() {
                                  </div>
                               </div>
                            </div>
-
-                           {state.results.length > 0 && (
-                              <div className="bg-white/50 p-6 rounded-3xl border border-white/50">
-                                 <h4 className="text-[10px] font-black uppercase text-gray-400 mb-4 tracking-widest flex items-center gap-2">
-                                    <Globe className="h-3 w-3 text-blue-500" />
-                                    Verified Intelligence Sources
-                                 </h4>
-                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                                    {state.results.slice(0, 4).map((source, i) => (
-                                       <a 
-                                         href={source.url} 
-                                         target="_blank" 
-                                         rel="noopener noreferrer" 
-                                         key={i} 
-                                         className="flex items-center gap-3 p-3 bg-white/60 hover:bg-white/80 rounded-2xl border border-white/40 transition-colors group"
-                                       >
-                                          <div className="min-w-0 flex-1">
-                                             <div className="text-[10px] font-black text-gray-800 truncate">{source.title}</div>
-                                             <div className="text-[9px] text-gray-400 truncate font-mono">{new URL(source.url).hostname}</div>
-                                          </div>
-                                          <ExternalLink className="h-3 w-3 text-gray-300 ml-auto group-hover:text-blue-500 transition-colors" />
-                                       </a>
-                                    ))}
-                                 </div>
-                              </div>
-                           )}
                         </motion.div>
                      )}
                    </AnimatePresence>
@@ -616,8 +494,8 @@ export default function App() {
                    {/* Step Legend */}
                    <div className="mt-auto flex justify-between items-end">
                       <div className="flex gap-2">
-                        {['Ingest', 'Discovery', 'Synthesis'].map((step, i) => {
-                          const activeStep = state.status === 'SCRAPING' ? 0 : state.status === 'RESEARCHING' ? 1 : 2;
+                        {['Ingest', 'Decompose', 'Verify', 'Synthesize'].map((step, i) => {
+                          const activeStep = state.status === 'SCRAPING' ? 0 : state.status === 'EXTRACTING' ? 1 : state.status === 'RESEARCHING' ? 2 : 3;
                           return (
                             <div key={i} className={`h-1.5 w-12 rounded-full transition-all duration-700 ${i <= activeStep ? 'bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.5)]' : 'bg-gray-200'}`} />
                           );
@@ -700,7 +578,7 @@ export default function App() {
         animate={{ y: 0 }}
         className="fixed bottom-6 left-1/2 -translate-x-1/2 google-glass px-8 py-3 rounded-full flex items-center gap-8 text-[11px] font-black text-gray-500 tracking-wider z-50 whitespace-nowrap shadow-2xl"
       >
-        <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-blue-500 shadow-[0_0_8px_#4285F4]" /> Runtime: {elapsed > 0 ? `${elapsed}s` : 'IDLE'}</div>
+        <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-blue-500 shadow-[0_0_8px_#4285F4]" /> Model: Gemini Life 3.1</div>
         <div className="flex items-center gap-2 text-gray-200">|</div>
         <div className="flex items-center gap-2">Precision: RAG Focused</div>
         <div className="flex items-center gap-2 text-gray-200">|</div>

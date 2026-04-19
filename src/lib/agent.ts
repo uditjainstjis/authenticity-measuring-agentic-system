@@ -14,21 +14,35 @@ export const createAgentGraph = (callbacks: {
     }
   }) as any;
 
-  // Extraction & Parallel Discovery Node
-  workflow.addNode("discovery", async (state: any) => {
-    const update = await callbacks.onNodeStart("discovery", state);
+  // Extraction Node
+  workflow.addNode("extract", async (state: any) => {
+    const update = await callbacks.onNodeStart("extract", state);
     return { ...state, ...update };
   });
 
-  // Synthesis Node (The "Jury")
-  workflow.addNode("synthesis", async (state: any) => {
-    const update = await callbacks.onNodeStart("synthesis", state);
+  // Vector Embedding Node (Milestone 2)
+  workflow.addNode("embed", async (state: any) => {
+    const update = await callbacks.onNodeStart("embed", state);
     return { ...state, ...update };
   });
 
-  workflow.addEdge(START, "discovery");
-  workflow.addEdge("discovery", "synthesis");
-  workflow.addEdge("synthesis", END);
+  // Research Node
+  workflow.addNode("research", async (state: any) => {
+    const update = await callbacks.onNodeStart("research", state);
+    return { ...state, ...update };
+  });
+
+  // Evaluation Node
+  workflow.addNode("evaluate", async (state: any) => {
+    const update = await callbacks.onNodeStart("evaluate", state);
+    return { ...state, ...update };
+  });
+
+  workflow.addEdge(START, "extract");
+  workflow.addEdge("extract", "embed");
+  workflow.addEdge("embed", "research");
+  workflow.addEdge("research", "evaluate");
+  workflow.addEdge("evaluate", END);
 
   return workflow.compile();
 };
