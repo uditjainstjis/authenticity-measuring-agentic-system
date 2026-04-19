@@ -1,0 +1,6 @@
+{
+  "name": "Veritas: Agentic News Credibility Engine",
+  "description": "An advanced misinformation monitoring agent powered by LangGraph, Gemini, and RAG. Autonomously analyzes claims through real-time web research and vector-embedded fact-checks.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}
